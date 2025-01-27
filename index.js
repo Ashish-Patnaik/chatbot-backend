@@ -1,62 +1,75 @@
-require("dotenv").config(); // Import dotenv to handle environment variables
-const express = require("express"); // Import Express to create the server
-const bodyParser = require("body-parser"); // Import Body Parser to handle JSON
-const cors = require("cors"); // Import CORS to allow requests from the frontend
+require("dotenv").config();
+const express = require("express");
+const bodyParser = require("body-parser");
+const cors = require("cors");
+const app = express();
+const PORT = process.env.PORT || 3000;
 
-const app = express(); // Create an Express app
-const PORT = process.env.PORT || 3000; // Set the port for the server
+// Add this line to import node-fetch if you're using Node.js < 18
+const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 
-// Middleware: Allow CORS, parse JSON bodies
 app.use(cors());
 app.use(bodyParser.json());
 
-// API endpoint for handling chatbot requests
-app.post("/api/chat", async (req, res) => {
-  const apiKey = process.env.API_KEY; // Get API key from environment variables
-  const userMessage = req.body.message; // Get the user's message from the request body
-
-  try {
-    // Call the Gemini API with the user's message
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                {
-                  text: userMessage,
-                },
-              ],
-            },
-          ],
-        }),
-      }
-    );
-
-    // If the Gemini API response is not successful, throw an error
-    if (!response.ok) {
-      throw new Error("Failed to fetch response from Gemini API.");
+// Helper function to validate API key
+function validateApiKey(apiKey) {
+    if (!apiKey) {
+        throw new Error("API key is missing. Please check your environment variables.");
     }
+    return apiKey;
+}
 
-    // Parse the response from the Gemini API
-    const data = await response.json();
-    const botResponse = data.candidates[0].content.parts[0].text;
+app.post("/api/chat", async (req, res) => {
+    try {
+        const apiKey = validateApiKey(process.env.API_KEY);
+        const userMessage = req.body.message;
 
-    // Send the chatbot's response back to the frontend
-    res.json({ response: botResponse });
-  } catch (error) {
-    // If there's an error, log it and return an error message
-    console.error(error);
-    res.status(500).json({ error: "Internal Server Error" });
-  }
+        if (!userMessage) {
+            return res.status(400).json({ error: "Message is required" });
+        }
+
+        const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${apiKey}`,
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    contents: [{
+                        parts: [{
+                            text: userMessage,
+                        }],
+                    }],
+                }),
+            }
+        );
+
+        if (!response.ok) {
+            const errorData = await response.text();
+            console.error("API Error Response:", errorData);
+            throw new Error(`Gemini API error: ${response.status} ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        
+        if (!data.candidates || !data.candidates[0]?.content?.parts?.[0]?.text) {
+            throw new Error("Unexpected API response format");
+        }
+
+        const botResponse = data.candidates[0].content.parts[0].text;
+        res.json({ response: botResponse });
+
+    } catch (error) {
+        console.error("Detailed error:", error);
+        res.status(500).json({ 
+            error: "Internal Server Error", 
+            message: error.message 
+        });
+    }
 });
 
-// Start the server and listen on the specified port
 app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
+    console.log(`Server is running on http://localhost:${PORT}`);
+    console.log("API Key present:", !!process.env.API_KEY);
 });
