@@ -1,62 +1,89 @@
-require("dotenv").config(); // Import dotenv to handle environment variables
-const express = require("express"); // Import Express to create the server
-const bodyParser = require("body-parser"); // Import Body Parser to handle JSON
-const cors = require("cors"); // Import CORS to allow requests from the frontend
+require("dotenv").config();
+const express = require("express");
+const bodyParser = require("body-parser");
+const cors = require("cors");
+const app = express();
+const PORT = process.env.PORT || 10000;
 
-const app = express(); // Create an Express app
-const PORT = process.env.PORT || 3000; // Set the port for the server
+// Add this line for Node.js fetch support
+const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 
-// Middleware: Allow CORS, parse JSON bodies
 app.use(cors());
 app.use(bodyParser.json());
 
-// API endpoint for handling chatbot requests
-app.post("/api/chat", async (req, res) => {
-  const apiKey = process.env.API_KEY; // Get API key from environment variables
-  const userMessage = req.body.message; // Get the user's message from the request body
-
-  try {
-    // Call the Gemini API with the user's message
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                {
-                  text: userMessage,
-                },
-              ],
-            },
-          ],
-        }),
-      }
-    );
-
-    // If the Gemini API response is not successful, throw an error
-    if (!response.ok) {
-      throw new Error("Failed to fetch response from Gemini API.");
-    }
-
-    // Parse the response from the Gemini API
-    const data = await response.json();
-    const botResponse = data.candidates[0].content.parts[0].text;
-
-    // Send the chatbot's response back to the frontend
-    res.json({ response: botResponse });
-  } catch (error) {
-    // If there's an error, log it and return an error message
-    console.error(error);
-    res.status(500).json({ error: "Internal Server Error" });
-  }
+// Add a test route for the root URL
+app.get("/", (req, res) => {
+    res.json({ message: "Server is running!" });
 });
 
-// Start the server and listen on the specified port
+// Add a test route for checking API key
+app.get("/test", (req, res) => {
+    res.json({ 
+        message: "Test endpoint working",
+        apiKeyPresent: !!process.env.API_KEY,
+        apiKeyLength: process.env.API_KEY ? process.env.API_KEY.length : 0
+    });
+});
+
+app.post("/api/chat", async (req, res) => {
+    try {
+        const apiKey = process.env.API_KEY;
+        if (!apiKey) {
+            console.error("API key is missing");
+            return res.status(500).json({ error: "API key configuration error" });
+        }
+
+        const userMessage = req.body.message;
+        if (!userMessage) {
+            return res.status(400).json({ error: "Message is required" });
+        }
+
+        console.log("Attempting API call with message:", userMessage);
+
+        const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${apiKey}`,
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    contents: [{
+                        parts: [{
+                            text: userMessage,
+                        }],
+                    }],
+                }),
+            }
+        );
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error("Gemini API error:", errorText);
+            throw new Error(`Gemini API error: ${response.status} ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        console.log("Received API response:", data);
+
+        if (!data.candidates || !data.candidates[0]?.content?.parts?.[0]?.text) {
+            throw new Error("Invalid API response format");
+        }
+
+        res.json({ response: data.candidates[0].content.parts[0].text });
+
+    } catch (error) {
+        console.error("Detailed error:", error);
+        res.status(500).json({ 
+            error: "Server Error", 
+            message: error.message,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
 app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
+    console.log(`Server is running on http://localhost:${PORT}`);
+    console.log("API Key present:", !!process.env.API_KEY);
+    console.log("API Key length:", process.env.API_KEY ? process.env.API_KEY.length : 0);
 });
